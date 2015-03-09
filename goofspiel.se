@@ -1,0 +1,225 @@
+#def init:
+#create empty datastructure to hold multiple games.
+#generate random card using XORd salts from reveal step
+#commit
+macro bn():
+    block.number+1
+macro cronos($player_id):
+    db("step"+$player_id, game_id)+(db("round"+$player_id, game_id)*2)
+macro db($name, $game_id):
+    self.storage[$name+($game_id/(2**40))]
+macro DB($name):
+    self.storage[$name+(game_id/(2**40))]
+macro verify_sign($hash, $addr, $signature, $game_id):
+    v=$signature[0]
+    r=$signature[1]
+    s=$signature[2]
+    $addr==ecrecover($hash, v, r, s)
+macro verify_sign2($hash, $addr1, $addr2, $sig1, $sig2, $game_id):
+    verify_sign($hash, $addr1, $sig1, $game_id) and verify_sign($hash, $addr2, $sig2, $game_id)
+macro draw($nth):
+    deck=DB("deck")
+    c=DB("cards_per_hand")
+    i=0
+    j=0
+    log("abc")
+    while i<c:
+        i=i+1
+        b=(deck/(2**i))
+        if b%2:#the card still exists
+            if $nth==0:
+                j=i
+            $nth=$nth-1
+    j
+macro end_macro():
+    db("timer", game_id)=0
+    #should zero out all the things to recollect money.
+def deposit(addr):
+    balance=self.storage[addr]
+    balance=balance+msg.value
+    self.storage[addr]=balance
+def new_game(cards_per_suit, game_id, time_limit, bet, addr1, addr2, sig1:arr, sig2:arr ):
+    if db(addr1, 0)<bet:
+        log(1111)
+        return "not enough funds"
+    if db(addr2, 0)<bet:
+        log(1112)
+        return "not enough funds"
+    hash=sha256([cards_per_suit, game_id, time_limit, bet, addr1, addr2]:arr)
+    if not verify_sign2(hash, addr1, addr2, sig1, sig2, game_id):
+        log(1113)
+        return "bad signature"
+    DB("turn_nonce")=0
+    DB("time_limit")=time_limit
+    DB("cards_per_hand")=cards_per_suit
+    DB("bet")=bet
+    DB("timer")=bn()
+    log(101010101010)
+    log(bn())
+    i=2
+    hand=(2**cards_per_suit)-1# in binary: 000...000111...111
+    log(1400)
+    log(hand)
+    DB("deck")=hand
+    db(addr1,0)=db(addr1,0)-bet
+    db(addr2,0)=db(addr2,0)-bet
+    DB(0)=addr1
+    DB(1)=addr2
+    while i>0:
+        i=i-1
+        DB("hand"+i)=hand
+        DB("points"+i)=0
+        DB("step"+i)=0#0 means the next thing that user will do is commit, 1 is for reveal
+        DB("round"+i)=0
+        DB("played"+i)=0
+        DB("salt"+i)=0
+        #db(addrs[i], game_id)=db(addrs[i], game_id)+bet
+#add addresses of player_1 and player_2 to storage.
+
+#game_state: cards left in each player's hand. Cards left in deck. Points won. 
+def commit(game_id, player_id, signature, game_id, hand1, hand2, points1, points2, turn_nonce, deck, cards_per_hand, commit_hash):
+    #this transaction must be preceded by a reveal transaction from every player.
+    #if final commit, reduce cards_per_hand
+    if DB("timer")==0:
+        log(1111)
+        return("game ended already")
+    hash=sha256([cards_per_hand, game_id, DB(0), DB(1), hand1, hand2, points1, points2, turn_nonce, deck]:arr)
+    if not verify_sign(hash, DB(player_id), sig1, game_id):
+        log(hash)
+        log(11112)
+        return "bad signature"
+    if turn_nonce<DB("turn_nonce"):
+        log(11113)
+        return "cannot commit into the past"
+    if DB("step"+player_id)==0:
+        log(1112)
+        return "you already committed"
+    DB("timer") = bn()
+    DB("step"+player_id)=1
+    DB("commit_hash"+player_id)=commit_hash
+    #no round or turn_nonce
+
+    
+
+    if DB("step")+DB("step"+1)!=2:
+        return("not everyone committed")
+def poly_commit(sig1:arr, sig2:arr, game_id, hand1, hand2, points1, points2, turn_nonce, deck, cards_per_hand, commit_hash1, commit_hash2, salt1, salt2):#number of signatures=num_players
+    #this transaction lets you skip turn_nonces into the future. Disappearing the skipped steps to off-chain.
+    log(12345)
+    if DB("timer")==0:
+        log(1111)
+        return("game ended already")
+    hash=sha256([cards_per_hand, game_id, DB(0), DB(1), hand1, hand2, points1, points2, turn_nonce, deck]:arr)
+    if not verify_sign2(hash, DB(0), DB(1), sig1, sig2, game_id):
+        log(hash)
+        log(11112)
+        return("bad signature")
+    if turn_nonce<DB("turn_nonce"):
+        log(11113)
+        return "cannot poly_commit into the past"
+    DB("timer") = bn()
+    DB("salt") = salt1
+    DB("salt"+1) = salt2
+    DB("turn_nonce")=turn_nonce
+    DB("cards_per_hand")=cards_per_hand
+    DB("deck")=deck
+    DB("commit_hash")=commit_hash1
+    DB("commit_hash"+1)=commit_hash2
+    i=0
+    while i<num_players:
+        i=i+1
+        DB("step"+i)=1
+        DB("hand"+i)=hands[i]
+        DB("round"+i)=turn_nonce
+        DB("points"+i)=points[i]
+        DB("played"+i)=played[i]
+    log(272727)
+def reveal(game_id, player_id, signature, card, salt):
+    if DB("step"+player_id)==1:
+        return "you already revealed"
+    DB("step"+player_id)=1
+    b=DB("hand"+player_id)/(2**DB("turn_nonce"))
+    a=(b%2)
+    if a==0:
+        log(1114)
+        return "you cannot play the same card twice"
+    if not verify_sign(hash, DB(player_id), signature,game_id):
+        log(1113)
+        return "bad signature"
+    if DB("round"+1)!=DB("round"):
+        log(1112)
+        return("someone hasn't committed yet")
+    hash=sha256([card, salt])
+    if hash!=DB("commit_hash"+player_id):
+        log(1111)
+        return("that isn't the card you committed to")
+    DB("timer")=bn()
+    DB("played"+player_id)=card
+    DB("old_salt"+player_id)=DB("salt"+player_id)
+    DB("salt"+player_id)=salt
+    DB("hand"+player_id)=DB("hand"+player_id)-(2**card)
+    DB("round"+player_id)=DB("round"+player_id)+1
+    DB("step"+player_id)=0
+    if DB("step")+DB("step"+1)!=0:
+        return("not everyone revealed")
+    DB("turn_nonce")=DB("turn_nonce")+1
+    highest=max(DB("played"), DB("played"+1))
+    b=DB("cards_per_hand")
+    DB("cards_per_hand")=b-1
+    a=DB("old_salt")+DB("old_salt"+1)
+    nth=a%b
+    reward=draw(nth)
+    DB("deck")=DB("deck")-(2**reward)
+    if highest!=min(DB("played"), DB("played"+1)):#don't pay ties.
+        if DB("played")==highest:
+            DB("points")=DB("points")+reward
+        else:
+            DB("points"+1)=DB("points"+1)+reward
+    if DB("hand")!=0:
+        return("net yet final round")
+    highest=max(DB("points"), DB("points"+1))
+    lowest=min(DB("points"), DB("points"+1))
+    bet=DB("bet")
+    once=1
+    if highest==lowest:
+        once=0
+        db(DB(0), 0)=db(DB(0), 0)+bet
+        db(DB(1), 0)=db(DB(1), 0)+bet
+    if highest==DB("points") and once:
+        once=0
+        db(DB(0), 0)=db(DB(0), 0)+(2*bet)
+    if once:
+        db(DB(1), 0)=db(DB(1), 0)+(2*bet)
+    end_macro()
+    #delete something
+def out_of_time_withdraw(game_id, player_id, signature:arr):
+    #addr must have revealed more recently.
+    #if the other players don't respond within X-blocks, then addr wins.
+    if not verify_sign(hash, DB(player_id), signature,game_id):
+        return("bad signature")
+    if cronos(player_id)<=cronos(1-player_id):
+        return("you didn't play most recently")
+    if bn()-DB("timer")<DB("timeout"):
+        return("you didn't wait long enough for timeout")
+    db(DB(player_id), 0)=db(DB(player_id), 0)+(2*bet)
+    end_macro()
+        
+def end_game(winner_id, sig1:arr, sig2:arr, addr1, addr2, game_id):
+    #proposes a final state for the game. Can skip to this step at any time, disappearing the skipped steps to off-chain.
+    hash=sha256([winner_id, game_id]:arr)
+    if not verify_sign2(hash, addr1, addr2, sig1, sig2, game_id):
+        return "bad signature"
+    bet=db("bet", game_id)
+    if winner_id==2:
+        db(addr2, 0)=db(addr2, 0)+bet
+        db(addr1, 0)=db(addr1, 0)+bet
+    if winner_id==1:
+        db(addr2, 0)=db(addr2, 0)+(2*bet)
+    if winner_id==0:
+        log(27)
+        log(bet)
+        db(addr1, 0)=db(addr1, 0)+(2*bet)
+    end_macro()
+
+def check_balance(addr):
+    return(db(addr, 0))
