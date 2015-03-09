@@ -5,7 +5,7 @@ def hash_list(l):
     def g(x):
         if type(x) in [int, long]: x=utils.int_to_big_endian(x)
         return x
-    y=map(lambda x: g(x), l)
+    y=map(g, l)
     y=[utils.zpad(x, 32) for x in y]
     y=''.join(y)
     #save for pretty print z="".join("{:02x}".format(ord(c)) for c in y)
